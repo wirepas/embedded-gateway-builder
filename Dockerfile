@@ -1,39 +1,56 @@
-FROM ubuntu:24.04
-# Use the 20.04 LTS release instead of latest to have stable environement
+FROM ubuntu:22.04
+# Builder of the Quectel EC800U (UniRTOS, uis8852) OpenCPU image on Linux.
+# The RISC-V compiler is NOT in this image: it ships in the SDK (prebuilts/linux/...), so the SDK checkout is mounted
+# and the build runs inside. This image only holds the host tools the SDK build needs.
 
 # Create a default Wirepas user
 ARG user=wirepas
 RUN useradd -ms /bin/bash ${user}
 
-# Install python3, pip and wget
-RUN apt-get update \
-    && apt-get install -y \
-       bzip2 \
-       cmake \
-       curl \
-       libglib2.0-0 \
-       ninja-build \
-       python3 \
-       git \
-    && rm -fr /var/libapt/lists/*
+ENV DEBIAN_FRONTEND=noninteractive
+
+# The i386 libs are for the SDK's bundled nanopb protoc, which is a 32-bit binary even in the x86_64 prebuilts.
+RUN dpkg --add-architecture i386 \
+    && apt-get update -qq && apt-get install -y --no-install-recommends \
+        build-essential \
+        bzip2 \
+        ca-certificates \
+        cmake \
+        file \
+        git \
+        libc6:i386 \
+        libglib2.0-0 \
+        libstdc++6:i386 \
+        ninja-build \
+        p7zip-full \
+        python-is-python3 \
+        python3 \
+        tar \
+        unzip \
+        wget \
+        zlib1g:i386 \
+    && rm -rf /var/lib/apt/lists/* \
+    && git config --system --add safe.directory '*'
+
+# ARM GCC, laid out the way the SDK's buildlib.sh auto-detects it (UNIRTOS_GCC_TOOLCHAIN_PATH + a
+# gcc-arm-none-eabi-10.2.1 symlink)
+ARG ARM_GCC_VERSION=gcc-arm-none-eabi-10-2020-q4-major
+ARG ARM_GCC_ARCHIVE=${ARM_GCC_VERSION}-x86_64-linux.tar.bz2
+ARG ARM_GCC_URL=https://developer.arm.com/-/media/Files/downloads/gnu-rm/10-2020q4/${ARM_GCC_ARCHIVE}
+ARG TOOLCHAIN_ROOT=/opt/unirtos-toolchain
+RUN mkdir -p "${TOOLCHAIN_ROOT}/gcc" \
+    && wget -q --tries=3 --timeout=60 -O "/tmp/${ARM_GCC_ARCHIVE}" "${ARM_GCC_URL}" \
+    && tar -xjf "/tmp/${ARM_GCC_ARCHIVE}" -C "${TOOLCHAIN_ROOT}/gcc" \
+    && rm -f "/tmp/${ARM_GCC_ARCHIVE}" \
+    && ln -sfn "${TOOLCHAIN_ROOT}/gcc/${ARM_GCC_VERSION}" "${TOOLCHAIN_ROOT}/gcc-arm-none-eabi-10.2.1"
+
+ENV UNIRTOS_GCC_TOOLCHAIN_PATH=${TOOLCHAIN_ROOT}/gcc/${ARM_GCC_VERSION}
+ENV UNIRTOS_TOOLCHAIN_PATH=${UNIRTOS_GCC_TOOLCHAIN_PATH}
+ENV UNIRTOS_TOOLCHAIN_PATH_WIN=${UNIRTOS_GCC_TOOLCHAIN_PATH}
+ENV PATH=${UNIRTOS_GCC_TOOLCHAIN_PATH}/bin:${PATH}
+ENV CMAKE_SYSTEM_NAME=Generic
 
 WORKDIR /home/${user}
-
-COPY libicu55_55.1-7ubuntu0.5_amd64.deb libicu55_55.1-7ubuntu0.5_amd64.deb
-RUN apt install ./libicu55_55.1-7ubuntu0.5_amd64.deb && rm ./libicu55_55.1-7ubuntu0.5_amd64.deb
-
-# Install Arm compiler
-RUN curl -Lso gcc-arm-none-eabi-7-2017-q4-major-linux.tar.bz2 "https://armkeil.blob.core.windows.net/developer/Files/downloads/gnu-rm/7-2017q4/gcc-arm-none-eabi-7-2017-q4-major-linux.tar.bz2" \
-    && tar xjf gcc-arm-none-eabi-7-2017-q4-major-linux.tar.bz2 -C /opt/ \
-    && rm -f gcc-arm-none-eabi-7-2017-q4-major-linux.tar.bz2
-
-# Add Gcc 7 compiler to default path
-ENV PATH="/opt/gcc-arm-none-eabi-7-2017-q4-major/bin:${PATH}"
-
-RUN apt-get update \
-    && apt-get install -y \
-       libglib2.0-0 \
-    && rm -fr /var/libapt/lists/*
 
 # No need to be root anymore
 USER ${user}
