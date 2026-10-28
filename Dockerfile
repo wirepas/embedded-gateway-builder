@@ -23,6 +23,7 @@ RUN dpkg --add-architecture i386 \
         libglib2.0-0 \
         libstdc++6:i386 \
         ninja-build \
+        openssh-client \
         p7zip-full \
         python-is-python3 \
         python3 \
